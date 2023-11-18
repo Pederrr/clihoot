@@ -6,3 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+actix = "0.13.1"
+actix-rt = "2.9.0"
+actix-web = "4.4.0"
+actix-web-actors = "4.2.0"
+async-trait = "0.1.74"
+axum = { version = "0.6.20", features = ["ws", "headers"] }
+axum-extra = "0.8.0"
+futures = "0.3.29"
+futures-util = "0.3.29"
+headers = "0.3.9"
+hyper = { version = "1.0.1", features = ["full"] }
+serde = { version = "1.0.192", features = ["derive"] }
+serde_json = "1.0.108"
+tokio = { version = "1.34.0", features = ["full"] }
+tokio-tungstenite = "0.20.1"
+tower-http = { version = "0.4.4", features = ["fs", "trace"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+uuid = { version = "1.5.0", features = ["v4", "serde"] }
+
+[[bin]]
+name = "server_actor_client_management"
+path = "src/server_actor_client_management/main.rs"
