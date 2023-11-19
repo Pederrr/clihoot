@@ -11,64 +11,53 @@ use futures_util::{SinkExt, StreamExt};
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-use tungstenite::protocol::Role;
-use tungstenite::WebSocket;
+use tungstenite::protocol::frame::coding::CloseCode;
+use tungstenite::protocol::CloseFrame;
+use tungstenite::Message;
 use uuid::Uuid;
 
-pub struct WsConn<'a> {
-    /// The room this connection is in
+pub struct WsConn {
     room: Uuid,
 
-    /// The address of the lobby - that is the actor that will handle all the messages
     lobby_addr: Arc<Addr<Lobby>>,
 
-    /// The socket uuid for this connection
     connection_id: Uuid,
 
-    /// The actual TcpStream, which can be used to send messages to client
-    receiver: ReadHalf<'a>,
+    receiver: Option<SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>>,
 
-    /// The actual TcpStream, which can be used to receive messages from client
-    /// There is a dedicated task (`reader_task`) which reads from this.
-    sender: Option<WriteHalf<'a>>,
+    sender: SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
 
-    /// The task that reads from the TcpStream and sends messages to this actor
     reader_task: Option<JoinHandle<()>>,
 
-    /// The IP address of the client
     who: SocketAddr,
 }
 
-impl<'a> WsConn<'a> {
-    pub fn new(
+impl WsConn {
+    pub async fn new(
         room: Uuid,
         lobby: Arc<Addr<Lobby>>,
         socket: TcpStream,
         who: SocketAddr,
-    ) -> WsConn<'a> {
-        let mut socket = socket;
+    ) -> anyhow::Result<WsConn> {
+        let socket = tokio_tungstenite::accept_async(socket).await?;
 
-        let socket = WebSocket::from_raw_socket(socket, Role::Server, None);
+        let (sender, receiver) = socket.split();
 
-        let x = WebSocket::send(&mut socket, message)
-
-        WsConn {
+        Ok(WsConn {
             connection_id: Uuid::new_v4(),
             room,
             lobby_addr: lobby,
-            receiver: receiver,
-            sender: Some(sender),
+            receiver: Some(receiver),
+            sender,
             reader_task: None,
             who,
-        }
+        })
     }
 }
 
-impl<'a: 'static> Actor for WsConn<'a> {
+impl Actor for WsConn {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
@@ -95,14 +84,11 @@ impl<'a: 'static> Actor for WsConn<'a> {
 
         // in order not to move self into the closure, we need to extract the fields we need
         let who = self.who;
-        let receiver = self.sender.take().unwrap();
+        let receiver = self.receiver.take().unwrap();
 
         // Spawn a Tokio task which will read from the socket and generate messages for this actor
-        read_messages_from_socket(who, receiver)
-            .into_actor(self)
-            .spawn(ctx);
-
-        // self.reader_task = Some(reader_task);
+        let reader_task = tokio::spawn(read_messages_from_socket(receiver, who, addr));
+        self.reader_task = Some(reader_task);
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
@@ -118,8 +104,13 @@ impl<'a: 'static> Actor for WsConn<'a> {
     }
 }
 
-async fn read_messages_from_socket<'a>(receiver: ReadHalf<'a>, who: SocketAddr) {
-    while let Some(Ok(msg)) = receiver.re.await {
+async fn read_messages_from_socket<'a>(
+    mut receiver: SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>,
+    who: SocketAddr,
+    addr: Addr<WsConn>,
+) {
+    while let Some(Ok(msg)) = receiver.next().await {
+        println!("Received message from client: {who}");
         match msg {
             Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
             Message::Binary(b) => {
@@ -149,8 +140,8 @@ impl Handler<WsCloseConnection> for WsConn {
         // also send close message to the client
         println!("Sending close to {}...", self.who);
 
-        let _x = self.receiver.send(Message::Close(Some(CloseFrame {
-            code: axum::extract::ws::close_code::NORMAL,
+        let _x = self.sender.send(Message::Close(Some(CloseFrame {
+            code: CloseCode::Normal,
             reason: Cow::from("Goodbye"),
         })));
     }
@@ -163,7 +154,7 @@ impl Handler<RelayMessageToClient> for WsConn {
         // take the socket and send the message
 
         // TODO maybe wait?
-        let future = actix::fut::wrap_future::<_, Self>(self.receiver.send(Message::Text(msg.0)));
+        let future = actix::fut::wrap_future::<_, Self>(self.sender.send(Message::Text(msg.0)));
 
         // once the wrapped future resolves, update this actor's state
         let _update_self = future.map(|_, _, _| {});
@@ -175,7 +166,11 @@ impl Handler<RelayMessageToLobby> for WsConn {
 
     fn handle(&mut self, msg: RelayMessageToLobby, _ctx: &mut Self::Context) -> Self::Result {
         // in this function, we receive a text message from the client
-        println!("Received message from client: {}", self.who);
+        println!(
+            "Received message of length '{}' from client: '{}' and relaying to lobby",
+            msg.0.len(),
+            self.who
+        );
 
         // tell the lobby to send it to everyone else
         self.lobby_addr.do_send(ClientActorMessage {
