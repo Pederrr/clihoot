@@ -87,30 +87,29 @@ impl Actor for WsConn {
 
         // Spawn a Tokio task which will read from the socket and generate messages for this actor
 
-        // async move {
-        //     while let Some(Ok(msg)) = receiver.next().await {
-        //         match msg {
-        //             Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
-        //             Message::Binary(b) => {
-        //                 addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
-        //             }
-        //             Message::Close(_) => {
-        //                 println!("Client {who} disconnected from websocket");
+        async move {
+            while let Some(Ok(msg)) = receiver.next().await {
+                match msg {
+                    Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
+                    Message::Binary(b) => {
+                        addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
+                    }
+                    Message::Close(_) => {
+                        println!("Client {who} disconnected from websocket");
 
-        //                 // cannot call `ctx.stop();` because we are in another Task:
-        //                 // instead, we send a message to ourselves to stop
-        //                 addr.do_send(WsCloseConnection {});
+                        // cannot call `ctx.stop();` because we are in another Task:
+                        // instead, we send a message to ourselves to stop
+                        addr.do_send(WsCloseConnection {});
 
-        //                 // also quit the loop
-        //                 return;
-        //             }
-        //             _ => (),
-        //         }
-        //     }
-        // }
-        // .into_actor(self)
-        // .then(|res, _, ctx| fut::ready(()))
-        // .wait(ctx);
+                        // also quit the loop
+                        return;
+                    }
+                    _ => (),
+                }
+            }
+        }
+        .into_actor(self)
+        .spawn(ctx);
 
         // self.reader_task = Some(reader_task);
     }

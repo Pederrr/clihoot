@@ -34,11 +34,16 @@ async fn init() {
     // build our application with some routes
     let app = Router::new().route("/ws", get(ws_handler));
 
+    // TODO:
+    //  - abandon axum
+    //  - use tungtenite websocket library directly - no HTTP upgrading
+    //  - use actix for actor management
+
     let service = app.into_make_service_with_connect_info::<SocketAddr>();
 
     // run it with hyper
     let server = axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
-        .executor(tokio::spawn)
+        .executor(tokio::task::spawn_local)
         .serve(service);
 }
 
