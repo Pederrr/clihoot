@@ -6,16 +6,20 @@ use crate::messages::{
 use actix::{fut, ActorContext, ActorFutureExt};
 use actix::{Actor, Addr, ContextFutureSpawner, Running, WrapFuture};
 use actix::{AsyncContext, Handler};
-use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
+use tungstenite::protocol::Role;
+use tungstenite::WebSocket;
 use uuid::Uuid;
 
-pub struct WsConn {
+pub struct WsConn<'a> {
     /// The room this connection is in
     room: Uuid,
 
@@ -25,38 +29,46 @@ pub struct WsConn {
     /// The socket uuid for this connection
     connection_id: Uuid,
 
-    /// The actual websocket, which can be used to send messages to client
-    sender: SplitSink<WebSocket, Message>,
+    /// The actual TcpStream, which can be used to send messages to client
+    receiver: ReadHalf<'a>,
 
-    /// The actual websocket, which can be used to receive messages from client
+    /// The actual TcpStream, which can be used to receive messages from client
     /// There is a dedicated task (`reader_task`) which reads from this.
-    receiver: Option<SplitStream<WebSocket>>,
+    sender: Option<WriteHalf<'a>>,
 
-    /// The task that reads from the websocket and sends messages to this actor
+    /// The task that reads from the TcpStream and sends messages to this actor
     reader_task: Option<JoinHandle<()>>,
 
     /// The IP address of the client
     who: SocketAddr,
 }
 
-impl WsConn {
-    pub fn new(room: Uuid, lobby: Arc<Addr<Lobby>>, socket: WebSocket, who: SocketAddr) -> WsConn {
-        // Now, split the socket into a reader and a writer
-        let (sender, receiver) = socket.split();
+impl<'a> WsConn<'a> {
+    pub fn new(
+        room: Uuid,
+        lobby: Arc<Addr<Lobby>>,
+        socket: TcpStream,
+        who: SocketAddr,
+    ) -> WsConn<'a> {
+        let mut socket = socket;
+
+        let socket = WebSocket::from_raw_socket(socket, Role::Server, None);
+
+        let x = WebSocket::send(&mut socket, message)
 
         WsConn {
             connection_id: Uuid::new_v4(),
             room,
             lobby_addr: lobby,
-            sender,
-            receiver: Some(receiver),
+            receiver: receiver,
+            sender: Some(sender),
             reader_task: None,
             who,
         }
     }
 }
 
-impl Actor for WsConn {
+impl<'a: 'static> Actor for WsConn<'a> {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
@@ -83,33 +95,12 @@ impl Actor for WsConn {
 
         // in order not to move self into the closure, we need to extract the fields we need
         let who = self.who;
-        let receiver = self.receiver.take().unwrap();
+        let receiver = self.sender.take().unwrap();
 
         // Spawn a Tokio task which will read from the socket and generate messages for this actor
-
-        async move {
-            while let Some(Ok(msg)) = receiver.next().await {
-                match msg {
-                    Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
-                    Message::Binary(b) => {
-                        addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
-                    }
-                    Message::Close(_) => {
-                        println!("Client {who} disconnected from websocket");
-
-                        // cannot call `ctx.stop();` because we are in another Task:
-                        // instead, we send a message to ourselves to stop
-                        addr.do_send(WsCloseConnection {});
-
-                        // also quit the loop
-                        return;
-                    }
-                    _ => (),
-                }
-            }
-        }
-        .into_actor(self)
-        .spawn(ctx);
+        read_messages_from_socket(who, receiver)
+            .into_actor(self)
+            .spawn(ctx);
 
         // self.reader_task = Some(reader_task);
     }
@@ -127,6 +118,28 @@ impl Actor for WsConn {
     }
 }
 
+async fn read_messages_from_socket<'a>(receiver: ReadHalf<'a>, who: SocketAddr) {
+    while let Some(Ok(msg)) = receiver.re.await {
+        match msg {
+            Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
+            Message::Binary(b) => {
+                addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
+            }
+            Message::Close(_) => {
+                println!("Client {who} disconnected from TcpStream");
+
+                // cannot call `ctx.stop();` because we are in another Task:
+                // instead, we send a message to ourselves to stop
+                addr.do_send(WsCloseConnection {});
+
+                // also quit the loop
+                return;
+            }
+            _ => (),
+        }
+    }
+}
+
 impl Handler<WsCloseConnection> for WsConn {
     type Result = ();
 
@@ -136,7 +149,7 @@ impl Handler<WsCloseConnection> for WsConn {
         // also send close message to the client
         println!("Sending close to {}...", self.who);
 
-        let _x = self.sender.send(Message::Close(Some(CloseFrame {
+        let _x = self.receiver.send(Message::Close(Some(CloseFrame {
             code: axum::extract::ws::close_code::NORMAL,
             reason: Cow::from("Goodbye"),
         })));
@@ -150,7 +163,7 @@ impl Handler<RelayMessageToClient> for WsConn {
         // take the socket and send the message
 
         // TODO maybe wait?
-        let future = actix::fut::wrap_future::<_, Self>(self.sender.send(Message::Text(msg.0)));
+        let future = actix::fut::wrap_future::<_, Self>(self.receiver.send(Message::Text(msg.0)));
 
         // once the wrapped future resolves, update this actor's state
         let _update_self = future.map(|_, _, _| {});

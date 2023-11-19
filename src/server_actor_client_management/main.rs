@@ -1,7 +1,9 @@
+mod connection_acceptor;
 mod lobby;
 mod messages;
 mod websocket;
-use actix::Actor;
+use actix::{Actor, Addr};
+use actix_web_actors::ws;
 use hyper::service::service_fn;
 
 use axum::{
@@ -10,16 +12,21 @@ use axum::{
     routing::get,
     Router,
 };
+use lobby::Lobby;
+use tokio::net::{TcpListener, TcpSocket};
+use uuid::Uuid;
+use websocket::WsConn;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 //allows to extract the IP of connecting user
 use axum::extract::connect_info::ConnectInfo;
 
+const ROOM: uuid::Uuid = Uuid::new_v4();
+
 fn main() {
     let system = actix::System::with_tokio_rt(|| {
         tokio::runtime::Builder::new_current_thread()
-            .worker_threads(1)
             .enable_all()
             .build()
             .unwrap()
@@ -31,39 +38,35 @@ fn main() {
 }
 
 async fn init() {
-    // build our application with some routes
-    let app = Router::new().route("/ws", get(ws_handler));
-
     // TODO:
-    //  - abandon axum
     //  - use tungtenite websocket library directly - no HTTP upgrading
     //  - use actix for actor management
 
-    let service = app.into_make_service_with_connect_info::<SocketAddr>();
+    // spawn an actor for managing the lobby
+    let lobby_actor = Arc::new(Lobby::default().start());
 
-    // run it with hyper
-    let server = axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
-        .executor(tokio::task::spawn_local)
-        .serve(service);
+    // spawn task for accepting connections
+    let addr: SocketAddr = "0.0.0.0:3000".parse().unwrap();
+    let connection_acceptor: tokio::task::JoinHandle<Result<(), anyhow::Error>> =
+        tokio::spawn(accept_connections(addr, lobby_actor.clone()));
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+async fn accept_connections(addr: SocketAddr, lobby: Arc<Addr<Lobby>>) -> anyhow::Result<()> {
+    // create a TCP socket listener
+    let listener = TcpListener::bind(addr).await?;
+
+    loop {
+        // accept a connection
+        let (socket, who) = listener.accept().await?;
+
+        // spawn a actor for managing the connection
+        let ws = WsConn::new(ROOM, lobby.clone(), socket, who);
+        let _ = ws.start();
+    }
 }
 
 struct FooActor {}
 
 impl Actor for FooActor {
     type Context = actix::Context<Self>;
-}
-
-/// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(socket: WebSocket, who: SocketAddr) {
-    // create and start an actor for this connection
-    let ws = FooActor {};
-
-    let _addr = ws.start();
 }
