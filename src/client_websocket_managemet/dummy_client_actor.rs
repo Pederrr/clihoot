@@ -1,5 +1,5 @@
 use actix::prelude::*;
-use actix::{Actor, Context, Message};
+use actix::{Actor, Context};
 use std::time::Duration;
 
 use crate::websocket::{MessageFromServer, WebsocketActor, WebsocketMsg};

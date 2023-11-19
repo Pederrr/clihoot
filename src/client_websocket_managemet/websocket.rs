@@ -1,14 +1,13 @@
 use actix::prelude::*;
 use actix::{Actor, Context, Message};
-use anyhow::Result;
+
 use futures::stream::{SplitSink, SplitStream};
 use futures::task::SpawnExt;
 use futures::{SinkExt, StreamExt};
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
-use tokio::net::{TcpSocket, TcpStream};
+
+use tokio::net::TcpStream;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::{connect_async, tungstenite, WebSocketStream};
 
@@ -64,9 +63,10 @@ impl WebsocketActor {
 impl Handler<WebsocketMsg> for WebsocketActor {
     type Result = ();
 
-    fn handle(&mut self, msg: WebsocketMsg, ctx: &mut Context<Self>) -> () {
-        let mut ws_stream = Arc::clone(&self.ws_stream_tx);
+    fn handle(&mut self, msg: WebsocketMsg, ctx: &mut Context<Self>) {
+        let ws_stream = Arc::clone(&self.ws_stream_tx);
 
+        // TODO: maybe remove Mutex
         async move {
             println!("Client websocket actor: sending message");
             ws_stream
@@ -86,6 +86,7 @@ impl Handler<Subscribe> for WebsocketActor {
     type Result = ();
 
     fn handle(&mut self, msg: Subscribe, _: &mut Self::Context) {
+        println!("Client websocket actor: subscribing");
         self.subscribers.push(msg.0);
     }
 }
@@ -96,7 +97,10 @@ impl Actor for WebsocketActor {
     fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Websocket actor is alive");
 
-        let mut ws_stream_rx = Arc::clone(&self.ws_stream_rx);
+        let ws_stream_rx = Arc::clone(&self.ws_stream_rx);
+
+        // TODO: here we are cloning an old value, new subscribers do not get subscribed
+        //  -> probably use a mutex/lock/Arc or Arc<Mutex<>> to share the subscribers
         let subscribers = self.subscribers.clone();
 
         async move {
@@ -104,7 +108,10 @@ impl Actor for WebsocketActor {
             while let Ok(incoming_msg) = ws_stream_rx.borrow_mut().next().await.unwrap() {
                 let incoming_msg_text = incoming_msg.to_text().unwrap().to_string();
 
-                println!("message arrived, sending to all subscribers");
+                println!(
+                    "message arrived, sending to all {} subscribers",
+                    subscribers.len()
+                );
                 for sub in &subscribers {
                     sub.send(MessageFromServer {
                         content: incoming_msg_text.clone(),

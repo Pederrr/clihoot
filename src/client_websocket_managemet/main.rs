@@ -4,10 +4,10 @@ mod websocket;
 
 use crate::dummy_client_actor::DummyClientActor;
 use crate::websocket::{Subscribe, WebsocketActor};
-use actix::prelude::*;
-use actix::{Actor, Message};
+
+use actix::{Actor};
 use anyhow::Result;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt};
 use std::thread;
 use std::time::Duration;
 
