@@ -3,7 +3,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Paragraph},
+};
 use std::io::stdout;
 
 pub struct TerminalActor {
@@ -20,12 +23,21 @@ impl TerminalActor {
         }
     }
 
-    // TODO do we want to auto redraw every eg 50 miliseconds
-    //      or with call redraw in every message handler that
-    //      somehow changes what is visible on the screen ?
     pub fn redraw(&mut self) -> anyhow::Result<()> {
         // TODO the function for drawing different for each "screen"
         //      eg. enum and then using drawing function according to the enum member
+
+        // screens:
+        //  - choosing a name / color for avatar
+        //  - waiting in lobby to start game
+        //  - having a question with answers on the screen
+        //    (also with the count of people that answered + COUNTDOWN)
+        //  - being in the lobby waiting for others to answer
+        //  - showing the results of the question
+        //  - showing the final results of the game
+
+        // teacher screens:
+        //   - TODO
         self.terminal.draw(|frame| {
             frame.render_widget(
                 Paragraph::new(format!("{}", self.counter))
