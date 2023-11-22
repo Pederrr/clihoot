@@ -15,7 +15,7 @@ pub struct WsCloseConnection;
 pub struct RelayMessageToClient(pub String);
 
 //WsConn sends this to the lobby to say "put me in please"
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct ConnectToLobby {
     pub addr: Recipient<RelayMessageToClient>,
@@ -24,7 +24,7 @@ pub struct ConnectToLobby {
 }
 
 //WsConn sends this to a lobby to say "take me out please"
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct DisconnectFromLobby {
     pub room_id: Uuid,
@@ -32,7 +32,7 @@ pub struct DisconnectFromLobby {
 }
 
 //client sends this to the lobby for the lobby to echo out.
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct ClientActorMessage {
     pub id: Uuid,

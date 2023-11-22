@@ -8,13 +8,13 @@ use actix::{Actor, Addr, ContextFutureSpawner, Running, WrapFuture};
 use actix::{AsyncContext, Handler};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use std::borrow::Cow;
+use tokio::sync::Mutex;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-use tungstenite::protocol::frame::coding::CloseCode;
-use tungstenite::protocol::CloseFrame;
+
 use tungstenite::Message;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ pub struct WsConn {
 
     receiver: Option<SplitStream<tokio_tungstenite::WebSocketStream<TcpStream>>>,
 
-    sender: SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
+    sender: Arc<Mutex<SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>>>,
 
     reader_task: Option<JoinHandle<()>>,
 
@@ -50,7 +50,7 @@ impl WsConn {
             room,
             lobby_addr: lobby,
             receiver: Some(receiver),
-            sender,
+            sender: Arc::new(Mutex::new(sender)),
             reader_task: None,
             who,
         })
@@ -138,26 +138,33 @@ impl Handler<WsCloseConnection> for WsConn {
         ctx.stop();
 
         // also send close message to the client
-        println!("Sending close to {}...", self.who);
+        println!("NOT IMPLEMENTED Sending close to {}...", self.who);
 
-        let _x = self.sender.send(Message::Close(Some(CloseFrame {
-            code: CloseCode::Normal,
-            reason: Cow::from("Goodbye"),
-        })));
+        // let _x = self.sender.send(Message::Close(Some(CloseFrame {
+        //     code: CloseCode::Normal,
+        //     reason: Cow::from("Goodbye"),
+        // })));
     }
 }
 
 impl Handler<RelayMessageToClient> for WsConn {
     type Result = ();
 
-    fn handle(&mut self, msg: RelayMessageToClient, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RelayMessageToClient, ctx: &mut Self::Context) -> Self::Result {
         // take the socket and send the message
+        println!("Sending message '{}' to {}...", msg.0, self.who);
 
-        // TODO maybe wait?
-        let future = actix::fut::wrap_future::<_, Self>(self.sender.send(Message::Text(msg.0)));
+        let sender = self.sender.clone();
 
-        // once the wrapped future resolves, update this actor's state
-        let _update_self = future.map(|_, _, _| {});
+        // https://stackoverflow.com/questions/64434912/how-to-correctly-call-async-functions-in-a-websocket-handler-in-actix-web
+
+        let fut = async move {
+            let mut sender = sender.lock().await;
+            let _ = sender.send(Message::Text(msg.0)).await;
+        };
+
+        let fut = actix::fut::wrap_future::<_, Self>(fut);
+        ctx.spawn(fut);
     }
 }
 

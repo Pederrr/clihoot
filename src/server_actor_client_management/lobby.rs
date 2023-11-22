@@ -15,6 +15,7 @@ pub struct Lobby {
 
 impl Lobby {
     fn send_message(&self, message: &str, id_to: &Uuid) {
+        println!("sending message '{message}' to '{id_to}'");
         if let Some(socket_recipient) = self.sessions.get(id_to) {
             socket_recipient.do_send(RelayMessageToClient(message.to_owned()));
         } else {
@@ -45,6 +46,7 @@ impl Handler<DisconnectFromLobby> for Lobby {
     type Result = ();
 
     fn handle(&mut self, msg: DisconnectFromLobby, _: &mut Context<Self>) {
+        println!("Received DisconnectFromLobby message: '{msg:?}'");
         if self.sessions.remove(&msg.id).is_some() {
             self.rooms
                 .get(&msg.room_id)
@@ -70,6 +72,8 @@ impl Handler<ConnectToLobby> for Lobby {
     type Result = ();
 
     fn handle(&mut self, msg: ConnectToLobby, _: &mut Context<Self>) -> Self::Result {
+        println!("Received ConnectToLobby message: '{msg:?}'");
+
         // create a room if necessary, and then add the id to it
         self.rooms
             .entry(msg.lobby_id)
@@ -98,6 +102,7 @@ impl Handler<ClientActorMessage> for Lobby {
     type Result = ();
 
     fn handle(&mut self, msg: ClientActorMessage, _: &mut Context<Self>) -> Self::Result {
+        println!("Received message from client: '{}'", msg.msg);
         if msg.msg.starts_with("\\w") {
             if let Some(id_to) = msg.msg.split(' ').collect::<Vec<&str>>().get(1) {
                 self.send_message(&msg.msg, &Uuid::parse_str(id_to).unwrap());
