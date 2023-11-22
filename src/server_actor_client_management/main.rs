@@ -1,13 +1,12 @@
 mod lobby;
 mod messages;
 mod websocket;
+mod ws_utils;
 use actix::{Actor, Addr};
 
-use futures_util::{SinkExt, StreamExt};
 use lobby::Lobby;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
-use tungstenite::Message;
 use uuid::Uuid;
 use websocket::WsConn;
 
@@ -21,26 +20,6 @@ fn create_tokio_runtime() -> tokio::runtime::Runtime {
 }
 
 fn main() {
-    // spawn a dummy client
-    // thread::spawn(move || {
-    //     create_tokio_runtime().block_on(spawn_client("0.0.0.0:3000".parse().unwrap()))
-    // });
-
-    // let server_http2 = thread::spawn(move || {
-    //     // Configure a runtime for the server that runs everything on the current thread
-    //     let system = actix::System::with_tokio_rt(create_tokio_runtime);
-
-    //     system.block_on(init());
-
-    //     // Combine it with a `LocalSet,  which means it can spawn !Send futures...
-    //     let local = tokio::task::LocalSet::new();
-    //     local.block_on(system.runtime(), init());
-
-    //     system.run().unwrap();
-    // });
-
-    // server_http2.join().unwrap();
-
     let system = actix::System::with_tokio_rt(create_tokio_runtime);
 
     system.block_on(init());
@@ -48,34 +27,16 @@ fn main() {
     system.run().unwrap();
 }
 
+#[allow(clippy::unused_async)]
 async fn init() {
     // spawn an actor for managing the lobby
     let lobby_actor = Arc::new(Lobby::default().start());
 
     // spawn task for accepting connections
+    // LOCAL SPAWN is very important here (actors can only be spawned on the same thread)
     let addr: SocketAddr = "0.0.0.0:3000".parse().unwrap();
     let connection_acceptor =
         tokio::task::spawn_local(accept_connections(addr, lobby_actor.clone()));
-}
-
-async fn spawn_client(addr: SocketAddr) -> anyhow::Result<()> {
-    // wait 2 seconds
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    println!("spawn_client, trying to connect to: {addr:?}");
-    let socket = TcpStream::connect(addr).await?;
-
-    let (socket, x) = tokio_tungstenite::client_async("ws://localhost:3000/ws", socket).await?;
-
-    let (mut sender, mut receiver) = socket.split();
-
-    sender.send(Message::Text("Hello".to_string())).await?;
-
-    while let Some(msg) = receiver.next().await {
-        println!("Received a message: {msg:?}");
-    }
-
-    Ok(())
 }
 
 async fn accept_connections(addr: SocketAddr, lobby: Arc<Addr<Lobby>>) -> anyhow::Result<()> {
@@ -96,10 +57,4 @@ async fn accept_connections(addr: SocketAddr, lobby: Arc<Addr<Lobby>>) -> anyhow
         let ws = WsConn::new(room, lobby.clone(), socket, who).await?;
         let _ = ws.start();
     }
-}
-
-struct FooActor {}
-
-impl Actor for FooActor {
-    type Context = actix::Context<Self>;
 }

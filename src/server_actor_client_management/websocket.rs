@@ -3,6 +3,8 @@ use crate::messages::{
     ClientActorMessage, ConnectToLobby, DisconnectFromLobby, RelayMessageToClient,
     RelayMessageToLobby, WsCloseConnection,
 };
+use crate::ws_utils::prepare_message;
+
 use actix::{fut, ActorContext, ActorFutureExt};
 use actix::{Actor, Addr, ContextFutureSpawner, Running, WrapFuture};
 use actix::{AsyncContext, Handler};
@@ -112,7 +114,7 @@ async fn read_messages_from_socket<'a>(
     while let Some(Ok(msg)) = receiver.next().await {
         println!("Received message from client: {who}");
         match msg {
-            Message::Text(s) => addr.do_send(RelayMessageToLobby(s.to_string())),
+            Message::Text(s) => addr.do_send(WsCloseConnection {}), //addr.do_send(RelayMessageToLobby(s.to_string())),
             Message::Binary(b) => {
                 addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
             }
@@ -135,15 +137,22 @@ impl Handler<WsCloseConnection> for WsConn {
     type Result = ();
 
     fn handle(&mut self, _msg: WsCloseConnection, ctx: &mut Self::Context) -> Self::Result {
-        ctx.stop();
-
         // also send close message to the client
-        println!("NOT IMPLEMENTED Sending close to {}...", self.who);
+        println!("Sending close to {}...", self.who);
 
-        // let _x = self.sender.send(Message::Close(Some(CloseFrame {
+        let msg = "Goodbye".to_owned();
+        // Message::Close(Some(CloseFrame {
         //     code: CloseCode::Normal,
         //     reason: Cow::from("Goodbye"),
-        // })));
+        // }));
+
+        let fut = prepare_message::<Self>(self.sender.clone(), msg);
+
+        // wait here until the message is sent
+        ctx.spawn(fut);
+
+        // stop the actor
+        ctx.stop();
     }
 }
 
@@ -154,16 +163,7 @@ impl Handler<RelayMessageToClient> for WsConn {
         // take the socket and send the message
         println!("Sending message '{}' to {}...", msg.0, self.who);
 
-        let sender = self.sender.clone();
-
-        // https://stackoverflow.com/questions/64434912/how-to-correctly-call-async-functions-in-a-websocket-handler-in-actix-web
-
-        let fut = async move {
-            let mut sender = sender.lock().await;
-            let _ = sender.send(Message::Text(msg.0)).await;
-        };
-
-        let fut = actix::fut::wrap_future::<_, Self>(fut);
+        let fut = prepare_message::<Self>(self.sender.clone(), msg.0);
         ctx.spawn(fut);
     }
 }
