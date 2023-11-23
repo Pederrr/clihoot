@@ -11,6 +11,15 @@ use tokio::net::TcpStream;
 
 use tungstenite::Message;
 
+pub async fn send_message(
+    sender: Arc<Mutex<SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>>>,
+    msg: Message,
+) {
+    let mut sender = sender.lock().await;
+    println!("locked sender and sending message: {msg:?}");
+    let _ = sender.send(msg).await;
+}
+
 /// Returns an actor future which sends a text message `msg` to the client, using the specified `sender`.
 pub fn prepare_message<T: Actor>(
     sender: Arc<Mutex<SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>>>,
@@ -26,11 +35,6 @@ pub fn prepare_explicit_message<T: Actor>(
     msg: Message,
 ) -> FutureWrap<impl Future<Output = ()>, T> {
     // https://stackoverflow.com/questions/64434912/how-to-correctly-call-async-functions-in-a-websocket-handler-in-actix-web
-    let fut = async move {
-        let mut sender = sender.lock().await;
-        println!("locked sender and sending message: {msg:?}");
-        let _ = sender.send(msg).await;
-    };
-
+    let fut = send_message(sender, msg);
     actix::fut::wrap_future::<_, T>(fut)
 }

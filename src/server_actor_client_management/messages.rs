@@ -8,7 +8,11 @@ pub struct RelayMessageToLobby(pub String);
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct WsCloseConnection;
+pub struct WsGracefulCloseConnection;
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct WsHardCloseConnection;
 
 #[derive(Message)]
 #[rtype(result = "()")]

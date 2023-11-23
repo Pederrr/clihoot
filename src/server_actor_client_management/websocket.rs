@@ -1,17 +1,20 @@
 use crate::lobby::Lobby;
 use crate::messages::{
     ClientActorMessage, ConnectToLobby, DisconnectFromLobby, RelayMessageToClient,
-    RelayMessageToLobby, WsCloseConnection,
+    RelayMessageToLobby, WsGracefulCloseConnection, WsHardCloseConnection,
 };
-use crate::ws_utils::prepare_message;
+use crate::ws_utils::{prepare_message, send_message};
 
 use actix::{fut, ActorContext, ActorFutureExt};
 use actix::{Actor, Addr, ContextFutureSpawner, Running, WrapFuture};
 use actix::{AsyncContext, Handler};
 use futures_util::stream::{SplitSink, SplitStream};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use tokio::sync::Mutex;
+use tungstenite::protocol::frame::coding::CloseCode;
+use tungstenite::protocol::CloseFrame;
 
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -104,6 +107,10 @@ impl Actor for WsConn {
         });
         Running::Stop
     }
+
+    fn stopped(&mut self, ctx: &mut Self::Context) {
+        println!("Stopped WsConn for {}", self.who);
+    }
 }
 
 async fn read_messages_from_socket<'a>(
@@ -114,7 +121,7 @@ async fn read_messages_from_socket<'a>(
     while let Some(Ok(msg)) = receiver.next().await {
         println!("Received message from client: {who}");
         match msg {
-            Message::Text(s) => addr.do_send(WsCloseConnection {}), //addr.do_send(RelayMessageToLobby(s.to_string())),
+            Message::Text(s) => addr.do_send(WsGracefulCloseConnection {}), //addr.do_send(RelayMessageToLobby(s.to_string())),
             Message::Binary(b) => {
                 addr.do_send(RelayMessageToLobby(String::from_utf8(b).unwrap()));
             }
@@ -123,7 +130,7 @@ async fn read_messages_from_socket<'a>(
 
                 // cannot call `ctx.stop();` because we are in another Task:
                 // instead, we send a message to ourselves to stop
-                addr.do_send(WsCloseConnection {});
+                addr.do_send(WsHardCloseConnection {});
 
                 // also quit the loop
                 return;
@@ -133,26 +140,31 @@ async fn read_messages_from_socket<'a>(
     }
 }
 
-impl Handler<WsCloseConnection> for WsConn {
+impl Handler<WsHardCloseConnection> for WsConn {
     type Result = ();
 
-    fn handle(&mut self, _msg: WsCloseConnection, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _msg: WsHardCloseConnection, ctx: &mut Self::Context) -> Self::Result {
+        // stop the actor
+        ctx.stop();
+    }
+}
+
+impl Handler<WsGracefulCloseConnection> for WsConn {
+    type Result = ();
+
+    fn handle(&mut self, _msg: WsGracefulCloseConnection, ctx: &mut Self::Context) -> Self::Result {
         // also send close message to the client
         println!("Sending close to {}...", self.who);
 
-        let msg = "Goodbye".to_owned();
-        // Message::Close(Some(CloseFrame {
-        //     code: CloseCode::Normal,
-        //     reason: Cow::from("Goodbye"),
-        // }));
+        let msg = Message::Close(Some(CloseFrame {
+            code: CloseCode::Normal,
+            reason: Cow::from("Goodbye"),
+        }));
 
-        let fut = prepare_message::<Self>(self.sender.clone(), msg);
+        // spawn a plain old Tokio task to send the goodbye message
+        tokio::spawn(send_message(self.sender.clone(), msg));
 
-        // wait here until the message is sent
-        ctx.spawn(fut);
-
-        // stop the actor
-        ctx.stop();
+        ctx.notify(WsHardCloseConnection {});
     }
 }
 
