@@ -4,6 +4,7 @@ mod websocket;
 mod ws_utils;
 use actix::{Actor, Addr};
 
+use actix_rt::System;
 use lobby::Lobby;
 use tokio::net::TcpListener;
 
@@ -37,6 +38,13 @@ async fn init() {
     let addr: SocketAddr = "0.0.0.0:3000".parse().unwrap();
     let connection_acceptor =
         tokio::task::spawn_local(accept_connections(addr, lobby_actor.clone()));
+
+    // handle CTRL+C gracefully
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        println!("CTRL-C received, shutting down");
+        System::current().stop();
+    });
 }
 
 async fn accept_connections(addr: SocketAddr, lobby: Arc<Addr<Lobby>>) -> anyhow::Result<()> {
