@@ -16,7 +16,6 @@ pub async fn send_message(
     msg: Message,
 ) {
     let mut sender = sender.lock().await;
-    println!("locked sender and sending message: {msg:?}");
     let _ = sender.send(msg).await;
 }
 

@@ -15,6 +15,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 fn create_tokio_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
+        .worker_threads(4)
         .enable_all()
         .build()
         .unwrap()
@@ -36,7 +37,7 @@ async fn init() {
     // spawn task for accepting connections
     // LOCAL SPAWN is very important here (actors can only be spawned on the same thread)
     let addr: SocketAddr = "0.0.0.0:3000".parse().unwrap();
-    let connection_acceptor =
+    let _connection_acceptor =
         tokio::task::spawn_local(accept_connections(addr, lobby_actor.clone()));
 
     // handle CTRL+C gracefully
