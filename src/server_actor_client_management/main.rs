@@ -15,7 +15,6 @@ use std::{net::SocketAddr, sync::Arc};
 
 fn create_tokio_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
-        .worker_threads(4)
         .enable_all()
         .build()
         .unwrap()
