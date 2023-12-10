@@ -27,6 +27,7 @@ async fn handle_input(term: Arc<Addr<term::TerminalActor>>) -> anyhow::Result<()
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
                         if key.kind == KeyEventKind::Press {
+                            // we are in raw mode, so we need to handle this ourselves
                             if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                                 term.send(term::Stop).await??;
                                 break;
@@ -35,9 +36,12 @@ async fn handle_input(term: Arc<Addr<term::TerminalActor>>) -> anyhow::Result<()
                             term.send(term::KeyPress {key_code: key.code}).await??;
                         }
                     }
+                    Some(Ok(Event::Resize(_, _))) => {
+                        term.send(term::Redraw).await??;
+                    }
                     Some(Err(e)) => return Err(e.into()),
                     None => {}
-                    _ => todo!() // screen resize
+                    _ => todo!()
                 }
             }
         }
